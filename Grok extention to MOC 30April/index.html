@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive MOC Simulator (PyScript/Pyodide - v3.7)</title>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
+    <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+    <script src='https://cdn.plot.ly/plotly-2.32.0.min.js' charset='utf-8'></script>
+
+    <style>
+        body { padding: 1rem; }
+        aside { width: 300px; padding-right: 1rem; border-right: 1px solid var(--pico-muted-border-color); }
+        main { padding-left: 1rem; }
+        .grid { display: grid; grid-template-columns: auto 1fr; gap: 1rem; }
+        label { margin-bottom: 0.25rem; display: inline-block; font-weight: bold; }
+        input[type=range] { width: 100%; }
+        pre { background-color: var(--pico-secondary-background); padding: 0.5rem; border-radius: var(--pico-border-radius); max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+        details summary { font-weight: bold; }
+        button { margin-top: 0.5rem; }
+        #plot_pressure_profile, #plot_flow_profile, #plot_pressure_history, #plot_flow_history { min-height: 300px; }
+    </style>
+
+    <script>
+        console.log("HTML: Setting up range slider outputs and Plotly function...");
+
+        function renderPlot(divId, data, layout) {
+            try {
+                const graphDiv = document.getElementById(divId);
+                if (!graphDiv) {
+                    console.error(`Plot div #${divId} not found!`);
+                    return;
+                }
+                console.log(`Calling renderPlot for: ${divId}`, data, layout);
+                Plotly.react(graphDiv, data, layout);
+            } catch (e) {
+                console.error(`Error in JS renderPlot for ${divId}:`, e);
+                console.error("Data causing error:", data);
+                console.error("Layout causing error:", layout);
+            }
+        }
+
+        function setupRangeOutputs() {
+            document.querySelectorAll('input[type="range"]').forEach(slider => {
+                const output = slider.nextElementSibling;
+                let displayOutput = null;
+                if (output && output.tagName === 'OUTPUT') { displayOutput = output; }
+                else if (output && output.nextElementSibling?.tagName === 'OUTPUT') {
+                    displayOutput = output.nextElementSibling;
+                }
+                if (displayOutput) {
+                    displayOutput.textContent = slider.value;
+                    slider.addEventListener('input', () => {
+                        displayOutput.textContent = slider.value;
+                    });
+                }
+            });
+            console.log("HTML: Range slider outputs configured.");
+        }
+
+        setTimeout(setupRangeOutputs, 1000);
+    </script>
+</head>
+
+<body>
+    <header>
+        <h1 style="text-align: center;"> Pipe Flow Simulator </h1>
+        <p style="text-align: center;">Single phase, transient, 1D pipe flow  </p>
+    </header>
+
+    <div class="grid">
+        <aside>
+            <h2>⚙️ Settings </h2>
+            
+            <details>
+                <summary>Pipe Geometry</summary>
+                <label for="L_input">Pipe Length (L, m)</label>
+                <input type="number" id="L_input" name="L" value="1000.0" step="10.0" min="1.0">
+                <label for="D_input">Pipe Diameter (D, m)</label>
+                <input type="number" id="D_input" name="D" value="0.05" step="0.005" min="0.001">
+                <label for="Dc_input">Coil Diameter (Dc, m)</label>
+                <input type="number" id="Dc_input" name="Dc" value="5.0" step="0.1" min="0.1">
+                <label for="rough_input">Pipe Roughness (ε, m)</label>
+                <input type="number" id="rough_input" name="roughness" value="0.000045" step="0.00001" min="0.0">
+                <label for="angle_input">Pipe Angle (° from horizontal)</label>
+                <input type="range" id="angle_input" name="angle" value="0.0" min="-90.0" max="90.0" step="1.0">
+                <output id="angle_output" for="angle_input">0.0</output> °
+            </details>
+
+            <details>
+                <summary>Fluid Properties</summary>
+                <p><small>Changes propagate from inlet at fluid velocity.</small></p>
+                <label for="rho_widget">Fluid Density (ρ, kg/m³)</label>
+                <input type="number" id="rho_widget" name="rho" value="1000.0" step="10.0" min="100.0" py-change="update_rho_live">
+                <label for="Kpl_input">Consistency Index (K, Pa.sⁿ)</label>
+                <input type="number" id="Kpl_input" name="K_pl" value="0.065" step="0.005" min="0.001" py-change="update_Kpl_live">
+                <label for="npl_input">Flow Behaviour Index (n)</label>
+                <input type="number" id="npl_input" name="n_pl" value="0.9" step="0.05" min="0.1" max="2.0" py-change="update_npl_live">
+                <label for="Kbulk_input">Fluid Bulk Modulus (K_bulk, Pa)</label>
+                <input type="number" id="Kbulk_input" name="K_bulk" value="1.0e9" step="0.1e9" min="1e6" py-change="update_Kbulk_live">
+            </details>
+
+            <details>
+                <summary>Pipe Properties</summary>
+                <label for="Epipe_input">Pipe Young's Modulus (E, Pa)</label>
+                <input type="number" id="Epipe_input" name="E_pipe" value="200e9" step="10e9" min="1e9">
+                <label for="epipe_input">Pipe Wall Thickness (e, m)</label>
+                <input type="number" id="epipe_input" name="e_pipe" value="0.005" step="0.001" min="0.001">
+                <label for="c1_input">Pipe Constraint Factor (c1)</label>
+                <input type="number" id="c1_input" name="c1" value="1.0" step="0.1" min="0.1" max="1.5">
+            </details>
+
+            <details>
+                <summary>Simulation Control</summary>
+                <label for="N_input">Spatial Segments (N)</label>
+                <input type="range" id="N_input" name="N" value="50" min="10" max="500" step="5">
+                <output id="N_output" for="N_input">50</output>
+                <label for="Cr_input">Target Courant Number (Cr)</label>
+                <input type="range" id="Cr_input" name="Cr" value="0.95" min="0.1" max="1.0" step="0.05">
+                <output id="Cr_output" for="Cr_input">0.95</output>
+                <label for="tfinal_input">Max Simulation Time (s)</label>
+                <input type="number" id="tfinal_input" name="t_final" value="1000.0" step="10.0" min="1.0">
+            </details>
+
+            <details>
+                <summary>Initial/Outlet Conditions</summary>
+                <label for="Pout_input">Outlet Pressure (P_out, Pa)</label>
+                <input type="number" id="Pout_input" name="P_out" value="1.0e5" step="0.1e5">
+                <label for="init_flow_input">Initial Flow Rate (L/min, for t=0)</label>
+                <input type="number" id="init_flow_input" name="initial_flow" value="0.0" min="0.0">
+            </details>
+
+            <hr>
+            <h2>⌚Flow Rate</h2>
+            <label for="live_flow_slider">Pump Flow Rate (L/min)</label>
+            <input type="range" id="live_flow_slider" name="live_flow" value="0.0" min="0.0" max="1000.0" step="10.0">
+            <output id="live_flow_output" for="live_flow_slider">0.0</output> L/min
+
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <button id="start_btn" py-click="start_sim">▶️ Start</button>
+                <button id="pause_btn" py-click="pause_sim">⏸️ Pause</button>
+                <button id="reset_btn" py-click="reset_sim">🔄 Reset</button>
+            </div>
+
+            <hr>
+            <h2>ℹ️ Status</h2>
+            <div id="status_area">Initializing...</div>
+
+        </aside>
+
+        <main>
+            <h2 style="text-align: center;">📈 Simulation Results</h2>
+            <article>
+                <h3 id="profile_time_label">Profiles</h3>
+                <div id="plot_pressure_profile"></div>
+                <div id="plot_flow_profile"></div>
+            </article>
+
+            <article>
+                <h3>Time Based Plots </h3>
+                <div id="plot_pressure_history"></div>
+                <div id="plot_flow_history"></div>
+            </article>
+
+            <article>
+                <h3>Key Metrics</h3>
+                <div id="metrics_area">
+                    <p> Initializing... </p>
+                </div>
+            </article>
+
+            <h2>📜 Simulation Log</h2>
+            <pre id="log_area">Initializing PyScript/Pyodide...</pre>
+        </main>
+    </div>
+
+    <py-config type="toml">
+        packages = ["numpy", "pandas", "micropip"]
+        [runner]
+        timeout = 60000
+    </py-config>
+
+    <py-script output="none">
+    from js import JSON
+    import numpy as np
+    
+    def sanitize_for_json(val):
+        import numpy as np
+        if isinstance(val, (list, tuple)): return [sanitize_for_json(item) for item in val]
+        elif isinstance(val, dict): return {k: sanitize_for_json(v) for k, v in val.items()}
+        elif isinstance(val, (np.integer, np.int_)): return int(val)
+        elif isinstance(val, (np.floating, np.float_)):
+            return None if np.isnan(val) or np.isinf(val) else float(val)
+        elif isinstance(val, (np.bool_)): return bool(val)
+        elif isinstance(val, (np.ndarray)): return [sanitize_for_json(item) for item in val.tolist()]
+        else: return val
+    
+    def safe_js(obj):
+        return JSON.parse(JSON.stringify(sanitize_for_json(obj)))
+     
+    def update_rho_live(*args, **kwargs):
+        try:
+            new_rho = float(document.getElementById("rho_widget").value)
+            import main
+            main.sim_state["fluid_properties"]["inlet"]["rho"] = new_rho
+            main.add_log_message("info", f"Inlet fluid density set to {new_rho} kg/m³")
+        except Exception as e:
+            print("Error updating rho live:", e)
+    
+    def update_Kpl_live(*args, **kwargs):
+        try:
+            new_Kpl = float(document.getElementById("Kpl_input").value)
+            import main
+            main.sim_state["fluid_properties"]["inlet"]["K_pl"] = new_Kpl
+            main.add_log_message("info", f"Inlet consistency index set to {new_Kpl} Pa.sⁿ")
+        except Exception as e:
+            print("Error updating K_pl live:", e)
+    
+    def update_npl_live(*args, **kwargs):
+        try:
+            new_npl = float(document.getElementById("npl_input").value)
+            import main
+            main.sim_state["fluid_properties"]["inlet"]["n_pl"] = new_npl
+            main.add_log_message("info", f"Inlet flow behavior index set to {new_npl}")
+        except Exception as e:
+            print("Error updating n_pl live:", e)
+    
+    def update_Kbulk_live(*args, **kwargs):
+        try:
+            new_Kbulk = float(document.getElementById("Kbulk_input").value)
+            import main
+            main.sim_state["fluid_properties"]["inlet"]["K_bulk"] = new_Kbulk
+            main.add_log_message("info", f"Inlet fluid bulk modulus set to {new_Kbulk} Pa")
+        except Exception as e:
+            print("Error updating K_bulk live:", e)
+    </py-script>
+    
+    <py-script src="./main.py"></py-script>
+</body>
+</html>
