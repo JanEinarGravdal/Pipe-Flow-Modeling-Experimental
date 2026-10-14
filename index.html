@@ -468,7 +468,7 @@
                         <div class="group-body">
                             <div class="field">
                                 <label for="rho_widget">Density ρ</label>
-                                <div class="input-unit"><input type="number" id="rho_widget" name="rho" value="1000.0" step="10.0" min="100.0" py-change="update_rho_live"><span>kg/m³</span></div>
+                                <div class="input-unit"><input type="number" id="rho_widget" name="rho" value="1000.0" step="10.0" min="100.0"><span>kg/m³</span></div>
                             </div>
                             <div class="field">
                                 <label for="Kpl_input">Consistency index K</label>
@@ -578,39 +578,8 @@
     </div>
 
     <py-config type="toml">
-        packages = ["numpy", "pandas", "micropip"]
+        packages = ["numpy"]
     </py-config>
-
-    <py-script output="none">
-    from js import JSON
-    import numpy as np
-
-    # Utility for safely converting Python objects to pure JS
-
-    def sanitize_for_json(val):
-        import numpy as np
-        if isinstance(val, (list, tuple)): return [sanitize_for_json(item) for item in val]
-        elif isinstance(val, dict): return {k: sanitize_for_json(v) for k, v in val.items()}
-        elif isinstance(val, (np.integer, np.int_)): return int(val)
-        elif isinstance(val, (np.floating, np.float_)):
-            return None if np.isnan(val) or np.isinf(val) else float(val)
-        elif isinstance(val, (np.bool_)): return bool(val)
-        elif isinstance(val, (np.ndarray)): return [sanitize_for_json(item) for item in val.tolist()]
-        else: return val
-
-    # JSON round-trip conversion with NumPy-safe data
-
-    def safe_js(obj):
-        return JSON.parse(JSON.stringify(sanitize_for_json(obj)))
-
-    def update_rho_live(*args, **kwargs):
-        try:
-            new_rho = float(document.getElementById("rho_widget").value)
-            import main
-            main.sim_state["run_params"]["rho"] = new_rho
-        except Exception as e:
-            print("Error updating rho live:", e)
-    </py-script>
 
     <py-script src="./main.py"></py-script>
 

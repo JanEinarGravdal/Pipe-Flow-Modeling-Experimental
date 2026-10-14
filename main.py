@@ -42,8 +42,8 @@ sim_state = {
     "history": {"time": [], "P_in": [], "Q_in": [], "P_out": [], "Q_out": []},
     "history_step_counter": 0,
     "simulation_task": None,
-    "max_pressure_bar": 0,
-    "max_flow_lpm": 0
+    "p_range_bar": [0.0, 0.0],
+    "q_range_lpm": [0.0, 0.0]
     }
 
 # --- DOM Element References ---
@@ -64,8 +64,8 @@ def calculate_Re_MR(V, D, n, K, rho_fluid):
     except (ValueError, TypeError) as e:
         add_log_message("error", f"Type error converting inputs in calculate_Re_MR: {e}")
         return 0.0
-        if abs(V) <= 1e-9: return 0.0;
-    
+    if abs(V) <= 1e-9: return 0.0
+
     if D <= 0 or K <= 0 or rho_fluid <= 0: return 0.0
     if abs(n) < 1e-9: n = 1e-9
     shear_rate_factor = (3 * n + 1) / (4 * n); gamma_dot_eff = shear_rate_factor * (8 * abs(V) / D)
@@ -204,21 +204,23 @@ def calculate_initial_conditions(Q0, P0_out, P_arr, V_arr, params):
          f_c0 = 0.03 # Use a default friction factor if the calculation fails
 
     if D <= 0: raise ValueError("Pipe diameter must be positive.")
-    friction_term0_orig = f_c0 * V0 * abs(V0) / (2.0 * D) if D > 0 else 0
-    gravity_term0_orig = g * math.sin(theta_rad); RHS_steady_0_orig = - friction_term0_orig - gravity_term0_orig
-    P_arr[N] = P0_out;
-    for j in range(N - 1, -1, -1): P_arr[j] = P_arr[j+1] - dx * RHS_steady_0_orig
-    status.append(f"info: Initial conditions calculated: V0={V0:.3f} m/s, P_in={P_arr[0]/1e5:.2f} bar (Using original IC method)")
+    # Steady state: dP/dx = -rho * (friction + gravity), integrated back from the outlet.
+    friction_term0 = f_c0 * V0 * abs(V0) / (2.0 * D)
+    gravity_term0 = g * math.sin(theta_rad)
+    dP_dx = -rho * (friction_term0 + gravity_term0)
+    P_arr[N] = P0_out
+    for j in range(N - 1, -1, -1): P_arr[j] = P_arr[j+1] - dx * dP_dx
+    status.append(f"info: Initial conditions calculated: V0={V0:.3f} m/s, P_in={P_arr[0]/1e5:.2f} bar")
     return status
 
 # ==============================================================================
 # --- Single Step MOC Function ---
 # ==============================================================================
-def run_moc_one_step(P, V, t, dt, current_params, live_inlet_Q_m3s):
+def run_moc_one_step(P, V, t, dt, current_params, live_inlet_Q_m3s, P_out_val):
     status_messages_step = []; N = current_params['N']; dx = current_params['dx']; rho = current_params['rho']
     a = current_params['a']; g = current_params['g']; theta_rad = current_params['theta_rad']; D = current_params['D']
     A = current_params['A']; n_pl = current_params['n_pl']; K_pl = current_params['K_pl']; D_c = current_params['D_c']
-    roughness = current_params['roughness']; P_out_val = get_input_value("Pout_input") or current_params.get('P_out_val', 1.0e5); P_new = np.zeros_like(P); V_new = np.zeros_like(V)
+    roughness = current_params['roughness']; P_new = np.zeros_like(P); V_new = np.zeros_like(V)
     
     try:
         V_new[0] = live_inlet_Q_m3s / A if A > 0 else 0
@@ -245,7 +247,7 @@ def run_moc_one_step(P, V, t, dt, current_params, live_inlet_Q_m3s):
                 V_new[j] = 0.5 * ( B_R + B_S + (P_R - P_S)/rho_a_safe_Loop ); P_new[j] = 0.5 * ( P_R + P_S + rho_a_safe_Loop*(B_R - B_S) )
                 if np.isnan(P_new[j]) or np.isnan(V_new[j]): raise ValueError(f"NaN detected at node {j}, t={t+dt:.3f}.")
             return P_new, V_new, status_messages_step
-        except Exception as e:status_messages_step.append(f"error: Error inside for loop t={t:.3f}s: {e}"); return V_R_BC, D, status_messages_step
+        except Exception as e:status_messages_step.append(f"error: Error inside for loop t={t:.3f}s: {e}"); return P, V, status_messages_step
 
     except Exception as e:
         status_messages_step.append(f"error: Error during MOC step at t={t:.3f}s: {e}"); return P, V, status_messages_step
@@ -290,8 +292,8 @@ def update_metrics_display():
 def sanitize_for_json(val):
     if isinstance(val, (list, tuple)): return [sanitize_for_json(item) for item in val]
     elif isinstance(val, dict): return {k: sanitize_for_json(v) for k, v in val.items()}
-    elif isinstance(val, (np.int_, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64)): return int(val)
-    elif isinstance(val, (np.float_, np.float16, np.float32, np.float64)):
+    elif isinstance(val, np.integer): return int(val)
+    elif isinstance(val, np.floating):
         if np.isnan(val) or np.isinf(val): return None
         return float(val)
     elif isinstance(val, (np.bool_)): return bool(val)
@@ -309,8 +311,14 @@ def create_plot_data(x, y, name, mode='lines', line_opts=None):
 # Ensure pyodide_js is imported at the top of main.py
 # import pyodide_js
 
+def axis_range(lo, hi):
+    """Axis range that always includes 0, with 5% headroom, and never collapses to zero height."""
+    lo = min(0.0, float(lo)); hi = max(0.0, float(hi))
+    if hi - lo <= 1e-9: hi = lo + 1.0
+    pad = 0.05 * (hi - lo)
+    return [lo - pad if lo < 0 else 0.0, hi + pad]
+
 def update_plots():
-    
 
     if sim_state["x_nodes"] is None or sim_state["P"] is None or sim_state["V"] is None:
         return
@@ -322,8 +330,11 @@ def update_plots():
         A = sim_state["run_params"].get('A', 0)
         Q_lpm = V * A * 60000.0 if A > 0 else np.zeros_like(V)
 
-        sim_state["max_pressure_bar"] = max(sim_state["max_pressure_bar"], np.max(P)/1e5)
-        sim_state["max_flow_lpm"] = max(sim_state["max_flow_lpm"], np.max(Q_lpm))
+        # The profile axes only grow during a run (so they don't jump around), and restart on Reset.
+        lo, hi = sim_state["p_range_bar"]
+        sim_state["p_range_bar"] = [min(lo, np.min(P)/1e5), max(hi, np.max(P)/1e5)]
+        lo, hi = sim_state["q_range_lpm"]
+        sim_state["q_range_lpm"] = [min(lo, np.min(Q_lpm)), max(hi, np.max(Q_lpm))]
 
         pressure_trace = create_plot_data(x_nodes, P / 1e5, 'Pressure')
         flow_trace = create_plot_data(x_nodes, Q_lpm, 'Flow Rate')
@@ -332,7 +343,7 @@ def update_plots():
                         'xaxis': {'title': 'Pipe Length (m)'},
                         'yaxis': {
                             'title': 'Pressure (bar)',
-                            'range': [0, 1.05 * sim_state["max_pressure_bar"]],
+                            'range': axis_range(*sim_state["p_range_bar"]),
                             'autorange': False
                         },
                         'uirevision': 'profile_p'
@@ -342,7 +353,7 @@ def update_plots():
                         'xaxis': {'title': 'Pipe Length (m)'},
                         'yaxis': {
                             'title': 'Flow Rate (L/min)',
-                            'range': [0, 1.05 * sim_state["max_flow_lpm"]],
+                            'range': axis_range(*sim_state["q_range_lpm"]),
                             'autorange': False
                         },
                         'uirevision': 'profile_q'
@@ -436,6 +447,7 @@ def initialize_sim_state_internal(params):
     """Internal function to initialize/reset state variables."""
     sim_state["status"] = "stopped"; sim_state["current_t"] = 0.0
     sim_state["run_params"] = params.copy()
+    sim_state["p_range_bar"] = [0.0, 0.0]; sim_state["q_range_lpm"] = [0.0, 0.0]
     N = params['N']; L = params['L']; A = params.get('A', 0)
     initial_flow_lpm = params['q_in_config'].get('flow_min_lpm', 0.0); initial_Q0 = initial_flow_lpm * 0.001 / 60.0
     P0_out = params['P_out_val']
@@ -503,11 +515,16 @@ async def simulation_loop():
             add_log_message("info", "Simulation reached t_final."); sim_state["status"] = "stopped"; update_status_display(); break
         steps_taken_this_batch = 0
         try:
+            # Live inputs are read once per batch; an empty or invalid box keeps the last good value.
+            live_Q_lpm = get_input_value("live_flow_slider", "range")
+            live_Q_m3s = (live_Q_lpm if live_Q_lpm is not None else 0.0) * 0.001 / 60.0
+            live_P_out = get_input_value("Pout_input")
+            if live_P_out is not None and math.isfinite(live_P_out): sim_state["run_params"]["P_out_val"] = live_P_out
+            P_out_run = sim_state["run_params"]["P_out_val"]
             while steps_taken_this_batch < STEPS_PER_UPDATE and sim_state["current_t"] < sim_state["run_params"]["t_final"]:
                 if sim_state["status"] != "running": break
-                live_Q_lpm = get_input_value("live_flow_slider", "range"); live_Q_m3s = (live_Q_lpm if live_Q_lpm is not None else 0.0) * 0.001 / 60.0
                 P_curr = sim_state["P"]; V_curr = sim_state["V"]; t_curr = sim_state["current_t"]; dt_run = sim_state["run_params"]["dt"]
-                P_next, V_next, step_msgs = run_moc_one_step(P_curr, V_curr, t_curr, dt_run, sim_state["run_params"], live_Q_m3s)
+                P_next, V_next, step_msgs = run_moc_one_step(P_curr, V_curr, t_curr, dt_run, sim_state["run_params"], live_Q_m3s, P_out_run)
                 sim_state["log_messages"].extend(step_msgs)
                 if any("error:" in msg for msg in step_msgs): sim_state["status"] = "error"; add_log_message("error","Error during step, stopping simulation."); break
                 sim_state["P"] = P_next; sim_state["V"] = V_next; sim_state["current_t"] += dt_run
@@ -528,6 +545,9 @@ async def simulation_loop():
 
 def start_sim(*args, **kwargs):
     print("start_sim called")
+    if sim_state["run_params"] and sim_state["current_t"] >= sim_state["run_params"].get("t_final", float("inf")):
+        add_log_message("warning", "Max simulation time reached. Press Reset to start a new run, or increase the max time.")
+        return
     if sim_state["status"] in ["stopped", "paused"]:
         is_resume = sim_state["current_t"] > 0.0 and sim_state["status"] == "paused"
         sim_state["status"] = "running"; add_log_message("info", "Simulation starting/resuming..."); update_status_display()
