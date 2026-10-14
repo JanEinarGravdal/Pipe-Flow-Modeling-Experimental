@@ -13,18 +13,65 @@
     <style>
         body { padding: 1rem; }
         aside { width: 300px; padding-right: 1rem; border-right: 1px solid var(--pico-muted-border-color); }
-        main { padding-left: 1rem; }
-        .grid { display: grid; grid-template-columns: auto 1fr; gap: 1rem; }
+        main { padding-left: 1rem; min-width: 0; }
+        .layout { display: grid; grid-template-columns: auto 1fr; gap: 1rem; }
         label { margin-bottom: 0.25rem; display: inline-block; font-weight: bold; }
         input[type=range] { width: 100%; }
         pre { background-color: var(--pico-secondary-background); padding: 0.5rem; border-radius: var(--pico-border-radius); max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
         details summary { font-weight: bold; }
         button { margin-top: 0.5rem; }
+        .buttons { display: flex; flex-direction: column; gap: 0.5rem; }
         #plot_pressure_profile, #plot_flow_profile, #plot_pressure_history, #plot_flow_history { min-height: 300px; }
+
+        /* --- Phone / narrow screens: stack panels, pin live controls to bottom --- */
+        @media (max-width: 768px) {
+            body { padding: 0.5rem 0.75rem 11rem; }
+            header h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+            header p { font-size: 0.85rem; }
+            h2 { font-size: 1.2rem; }
+            .layout { grid-template-columns: 1fr; gap: 0; }
+            aside { width: auto; padding-right: 0; border-right: none; }
+            main { padding-left: 0; }
+            article { padding: 0.5rem; }
+            #plot_pressure_profile, #plot_flow_profile, #plot_pressure_history, #plot_flow_history { min-height: 280px; }
+
+            #live_controls {
+                position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
+                margin: 0;
+                padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom));
+                background: var(--pico-background-color);
+                border-top: 1px solid var(--pico-muted-border-color);
+                box-shadow: 0 -2px 8px rgba(0,0,0,0.15);
+            }
+            #live_controls h2 { display: none; }
+            #live_controls label { margin-bottom: 0; font-size: 0.9rem; }
+            #live_controls input[type=range] { margin-bottom: 0.25rem; }
+            #live_controls .buttons { flex-direction: row; }
+            #live_controls .buttons button { flex: 1; margin: 0; padding: 0.5rem 0.25rem; font-size: 0.9rem; }
+        }
     </style>
 
     <script>
         console.log("HTML: Setting up range slider outputs and Plotly function...");
+
+        const narrowScreen = window.matchMedia('(max-width: 768px)');
+
+        // Compact plot layout for phones: smaller fonts/margins, legend below,
+        // and no drag-zoom so touch gestures scroll the page instead.
+        function adaptLayoutForPhone(layout) {
+            layout.height = 280;
+            layout.margin = { l: 50, r: 10, t: 40, b: 70 };
+            layout.font = { size: 11 };
+            layout.legend = { orientation: 'h', x: 0, y: -0.3 };
+            layout.dragmode = false;
+            if (typeof layout.title === 'string') {
+                layout.title = { text: layout.title };
+            }
+            if (layout.title) {
+                layout.title.font = { size: 13 };
+            }
+            return layout;
+        }
 
         function renderPlot(divId, data, layout) {
             try {
@@ -33,8 +80,10 @@
                     console.error(`Plot div #${divId} not found!`);
                     return;
                 }
-                console.log(`Calling renderPlot for: ${divId}`, data, layout); // DEBUG LOG
-                Plotly.react(graphDiv, data, layout);
+                if (narrowScreen.matches) {
+                    layout = adaptLayoutForPhone(layout);
+                }
+                Plotly.react(graphDiv, data, layout, { responsive: true, displaylogo: false });
             } catch (e) {
                 console.error(`Error in JS renderPlot for ${divId}:`, e);
                 console.error("Data causing error:", data);
@@ -70,7 +119,7 @@
         <p style="text-align: center;">Single phase 1D pipe flow using a MOC (Method of Characteristics) scheme</p>
     </header>
 
-    <div class="grid">
+    <div class="layout">
         <aside>
             <h2>⚙️ Settings </h2>
             
@@ -132,20 +181,19 @@
             </details>
 
             <hr>
-            <h2>
-                
-                  ⌚Flow Rate
-            </h2>
-            <label for="live_flow_slider">Pump Flow Rate (L/min)</label>
-            <input type="range" id="live_flow_slider" name="live_flow" value="0.0" min="0.0" max="1000.0" step="10.0">
-            <output for="live_flow_slider">0.0</output> L/min
+            <section id="live_controls">
+                <h2>⌚Flow Rate</h2>
+                <label for="live_flow_slider">Pump Flow Rate (L/min)</label>
+                <input type="range" id="live_flow_slider" name="live_flow" value="0.0" min="0.0" max="1000.0" step="10.0">
+                <output for="live_flow_slider">0.0</output> L/min
 
-            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                <button id="start_btn" py-click="start_sim">▶️ Start</button>
-                <button id="pause_btn" py-click="pause_sim">⏸️ Pause</button>
-                <button id="reset_btn" py-click="reset_sim">🔄 Reset</button>
-            </div>
-            
+                <div class="buttons">
+                    <button id="start_btn" py-click="start_sim">▶️ Start</button>
+                    <button id="pause_btn" py-click="pause_sim">⏸️ Pause</button>
+                    <button id="reset_btn" py-click="reset_sim">🔄 Reset</button>
+                </div>
+            </section>
+
 
              <hr>
             <h2>ℹ️ Status</h2>
