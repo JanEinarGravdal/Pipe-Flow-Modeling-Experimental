@@ -2,74 +2,359 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactive MOC Simulator (PyScript/Pyodide - v3.6)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Coiled Tubing Flow Simulator</title>
 
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
     <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
     <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
     <script src='https://cdn.plot.ly/plotly-2.32.0.min.js' charset='utf-8'></script>
 
     <style>
-        body { padding: 1rem; }
-        aside { width: 300px; padding-right: 1rem; border-right: 1px solid var(--pico-muted-border-color); }
-        main { padding-left: 1rem; min-width: 0; }
-        .layout { display: grid; grid-template-columns: auto 1fr; gap: 1rem; }
-        label { margin-bottom: 0.25rem; display: inline-block; font-weight: bold; }
-        input[type=range] { width: 100%; }
-        pre { background-color: var(--pico-secondary-background); padding: 0.5rem; border-radius: var(--pico-border-radius); max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
-        details summary { font-weight: bold; }
-        button { margin-top: 0.5rem; }
-        .buttons { display: flex; flex-direction: column; gap: 0.5rem; }
-        #plot_pressure_profile, #plot_flow_profile, #plot_pressure_history, #plot_flow_history { min-height: 300px; }
+        /* ---------- Design tokens: dark is the default ---------- */
+        :root {
+            color-scheme: dark;
+            --surface-page: #0b0d10;
+            --surface-card: #14171c;
+            --surface-sunken: #0f1216;
+            --border: #232830;
+            --border-strong: #343b45;
+            --text: #e8eaee;
+            --text-muted: #9aa1ab;
+            --text-faint: #6b727d;
+            --accent: #3b82f6;
+            --accent-hover: #5b97f8;
+            --accent-contrast: #ffffff;
+            --grid: #20252c;
+            --series-1: #3987e5;   /* inlet  */
+            --series-2: #d95926;   /* outlet */
+            --ok: #3fb950;
+            --warn: #d29922;
+            --err: #f85149;
+            --idle: #7d8590;
+            --radius: 8px;
+            --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+            --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            --mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+        }
+        /* ---------- Light theme (chosen with the header toggle) ---------- */
+        :root[data-theme="light"] {
+            color-scheme: light;
+            --surface-page: #f3f4f6;
+            --surface-card: #ffffff;
+            --surface-sunken: #f7f8fa;
+            --border: #dde0e5;
+            --border-strong: #c4c8cf;
+            --text: #16181d;
+            --text-muted: #5b616b;
+            --text-faint: #8a9099;
+            --accent: #1f5fae;
+            --accent-hover: #184d8f;
+            --accent-contrast: #ffffff;
+            --grid: #e7e9ec;
+            --series-1: #2a78d6;
+            --series-2: #eb6834;
+            --ok: #1a7f37;
+            --warn: #9a6700;
+            --err: #c62828;
+            --idle: #6b7280;
+            --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.08);
+        }
 
-        /* --- Phone / narrow screens: stack panels, pin live controls to bottom --- */
+        /* ---------- Base ---------- */
+        *, *::before, *::after { box-sizing: border-box; }
+        html { -webkit-text-size-adjust: 100%; }
+        body {
+            margin: 0;
+            background: var(--surface-page);
+            color: var(--text);
+            font: 14px/1.45 var(--font);
+        }
+        h1, h2, h3 { margin: 0; font-weight: 600; }
+
+        /* ---------- App bar ---------- */
+        .appbar {
+            position: sticky; top: 0; z-index: 900;
+            display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+            padding: calc(0.75rem + env(safe-area-inset-top, 0px)) 1.25rem 0.75rem;
+            background: var(--surface-card);
+            border-bottom: 1px solid var(--border);
+        }
+        .brand { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+        .brand-mark {
+            flex: none; width: 36px; height: 36px; border-radius: 8px;
+            display: grid; place-items: center;
+            background: var(--accent); color: var(--accent-contrast);
+        }
+        .brand h1 { font-size: 1.05rem; letter-spacing: -0.01em; }
+        .brand p { margin: 0.1rem 0 0; font-size: 0.8rem; color: var(--text-muted); }
+
+        .appbar-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+        .icon-btn { min-height: 0; width: 34px; height: 34px; padding: 0; border-radius: 999px; color: var(--text-muted); }
+        .icon-btn svg { width: 16px; height: 16px; }
+        .icon-moon { display: none; }
+        :root[data-theme="light"] .icon-sun { display: none; }
+        :root[data-theme="light"] .icon-moon { display: block; }
+
+        .status {
+            flex: none;
+            display: inline-flex; align-items: center; gap: 0.5rem;
+            padding: 0.3rem 0.75rem;
+            border: 1px solid var(--border); border-radius: 999px;
+            background: var(--surface-sunken);
+            font-size: 0.8rem; font-weight: 500; color: var(--text-muted);
+            font-variant-numeric: tabular-nums; white-space: nowrap;
+        }
+        .status::before {
+            content: ""; width: 8px; height: 8px; border-radius: 50%;
+            background: var(--idle);
+        }
+        .status[data-status="running"]::before { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+        .status[data-status="paused"]::before  { background: var(--warn); }
+        .status[data-status="error"]::before   { background: var(--err); }
+        .status[data-status="error"] { color: var(--err); }
+
+        /* ---------- Layout ---------- */
+        .layout {
+            display: grid;
+            grid-template-columns: 320px minmax(0, 1fr);
+            gap: 1.25rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 1.25rem;
+        }
+        .sidebar { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+        .sidebar-sticky { position: sticky; top: 5rem; display: flex; flex-direction: column; gap: 1rem; }
+        main { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+
+        .card {
+            background: var(--surface-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+        .card-header {
+            display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem;
+            padding: 0.75rem 1rem 0;
+        }
+        .card-title {
+            font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--text-muted);
+        }
+        .card-sub { font-size: 0.75rem; color: var(--text-faint); }
+        .card-body { padding: 0.75rem 1rem 1rem; }
+
+        /* ---------- Pump control ---------- */
+        .flow-readout { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+        .flow-readout label { font-weight: 500; color: var(--text-muted); }
+        .flow-value { font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+        .flow-value small { font-size: 0.8rem; font-weight: 500; color: var(--text-muted); margin-left: 0.25rem; }
+        .buttons { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 0.5rem; margin-top: 0.75rem; }
+
+        button {
+            appearance: none; cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+            min-height: 2.5rem; padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border-strong); border-radius: 6px;
+            background: var(--surface-card); color: var(--text);
+            font: 500 0.875rem/1 var(--font);
+            transition: background-color 0.15s, border-color 0.15s;
+        }
+        button:hover { background: var(--surface-sunken); border-color: var(--text-faint); }
+        button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+        button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+        button svg { width: 14px; height: 14px; flex: none; }
+
+        /* ---------- Parameter form ---------- */
+        .params-hint { margin: 0.25rem 1rem 0; font-size: 0.75rem; color: var(--text-faint); }
+        .group { border-top: 1px solid var(--border); }
+        .group:first-of-type { margin-top: 0.75rem; }
+        .group summary {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.7rem 1rem; cursor: pointer; list-style: none;
+            font-weight: 600; font-size: 0.875rem;
+        }
+        .group summary::-webkit-details-marker { display: none; }
+        .group summary::after {
+            content: ""; width: 7px; height: 7px; margin-right: 3px;
+            border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted);
+            transform: rotate(45deg); transition: transform 0.15s;
+        }
+        .group[open] summary::after { transform: rotate(-135deg); }
+        .group summary:hover { background: var(--surface-sunken); }
+        .group-body { display: grid; gap: 0.6rem; padding: 0.1rem 1rem 1rem; }
+
+        .field { display: grid; grid-template-columns: 1fr 9.5rem; align-items: center; gap: 0.5rem; }
+        .field > label { font-size: 0.8125rem; color: var(--text-muted); }
+        .field.range-field { grid-template-columns: 1fr auto; }
+        .field.range-field input[type=range] { grid-column: 1 / -1; }
+        .field.range-field output { font-variant-numeric: tabular-nums; font-weight: 500; font-size: 0.8125rem; }
+
+        .input-unit {
+            display: flex; align-items: center;
+            border: 1px solid var(--border-strong); border-radius: 6px;
+            background: var(--surface-card);
+            overflow: hidden;
+        }
+        .input-unit:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+        .input-unit input {
+            flex: 1; min-width: 0; width: 100%;
+            padding: 0.4rem 0.5rem;
+            border: 0; background: transparent; color: var(--text);
+            font: 0.8125rem var(--font); font-variant-numeric: tabular-nums; text-align: right;
+        }
+        .input-unit input:focus-visible { outline: none; }
+        .input-unit span {
+            flex: none; min-width: 3.25rem; padding: 0.4rem 0.5rem;
+            border-left: 1px solid var(--border);
+            background: var(--surface-sunken);
+            font-size: 0.75rem; color: var(--text-muted); text-align: center;
+        }
+
+        input[type=range] { width: 100%; margin: 0.25rem 0; accent-color: var(--accent); }
+
+        /* ---------- KPI tiles ---------- */
+        .kpis {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.75rem;
+        }
+        .kpi { padding: 0.75rem 1rem; }
+        .kpi-label { display: block; font-size: 0.75rem; color: var(--text-muted); }
+        .kpi-value {
+            display: block; margin-top: 0.2rem;
+            font-size: 1.4rem; font-weight: 600; letter-spacing: -0.01em;
+            font-variant-numeric: tabular-nums;
+        }
+        .kpi-value small { margin-left: 0.25rem; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+
+        /* ---------- Plots ---------- */
+        .plots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+        .plot { min-height: 300px; margin: 0 0.5rem 0.5rem; }
+
+        /* ---------- Log ---------- */
+        .log summary {
+            padding: 0.75rem 1rem; cursor: pointer; list-style: none;
+            font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+        }
+        .log summary::-webkit-details-marker { display: none; }
+        .log pre {
+            margin: 0 1rem 1rem; padding: 0.75rem;
+            max-height: 220px; overflow-y: auto; white-space: pre-wrap;
+            background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 6px;
+            font: 0.75rem/1.5 var(--mono); color: var(--text-muted);
+        }
+
+        .footnote { margin: 0; padding: 0 0.25rem; font-size: 0.75rem; color: var(--text-faint); }
+
+        /* ---------- Medium screens: plots in one column ---------- */
+        @media (max-width: 1200px) {
+            .plots { grid-template-columns: minmax(0, 1fr); }
+        }
+
+        /* ---------- Phones: stack panels, pin pump control to the bottom ---------- */
         @media (max-width: 768px) {
-            body { padding: 0.5rem 0.75rem 11rem; }
-            header h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-            header p { font-size: 0.85rem; }
-            h2 { font-size: 1.2rem; }
-            .layout { grid-template-columns: 1fr; gap: 0; }
-            aside { width: auto; padding-right: 0; border-right: none; }
-            main { padding-left: 0; }
-            article { padding: 0.5rem; }
-            #plot_pressure_profile, #plot_flow_profile, #plot_pressure_history, #plot_flow_history { min-height: 280px; }
+            .appbar { padding: calc(0.6rem + env(safe-area-inset-top, 0px)) 0.75rem 0.6rem; }
+            .brand-mark { width: 30px; height: 30px; }
+            .brand h1 { font-size: 0.95rem; }
+            .brand p { display: none; }
+            .layout {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 1rem;
+                padding: 0.75rem 0.75rem calc(10.5rem + env(safe-area-inset-bottom, 0px));
+            }
+            .sidebar-sticky { position: static; }
+            .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+            .kpi { padding: 0.6rem 0.75rem; }
+            .kpi-value { font-size: 1.15rem; }
+            .plot { min-height: 260px; margin: 0 0.25rem 0.25rem; }
 
             #live_controls {
                 position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
-                margin: 0;
-                padding: 0.5rem 0.75rem calc(0.5rem + env(safe-area-inset-bottom));
-                background: var(--pico-background-color);
-                border-top: 1px solid var(--pico-muted-border-color);
-                box-shadow: 0 -2px 8px rgba(0,0,0,0.15);
+                border-radius: 0; border-width: 1px 0 0;
+                box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.12);
             }
-            #live_controls h2 { display: none; }
-            #live_controls label { margin-bottom: 0; font-size: 0.9rem; }
-            #live_controls input[type=range] { margin-bottom: 0.25rem; }
-            #live_controls .buttons { flex-direction: row; }
-            #live_controls .buttons button { flex: 1; margin: 0; padding: 0.5rem 0.25rem; font-size: 0.9rem; }
+            #live_controls .card-header { display: none; }
+            #live_controls .card-body { padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom, 0px)); }
+            #live_controls .flow-value { font-size: 1.25rem; }
+            #live_controls .buttons { margin-top: 0.4rem; }
         }
     </style>
 
     <script>
-        console.log("HTML: Setting up range slider outputs and Plotly function...");
+        // ---------- Slider value readouts ----------
+        function setupRangeOutputs() {
+            document.querySelectorAll('input[type="range"]').forEach(slider => {
+                const output = document.querySelector(`output[for="${slider.id}"]`);
+                if (!output) return;
+                output.textContent = slider.value;
+                slider.addEventListener('input', () => { output.textContent = slider.value; });
+            });
+        }
+        document.addEventListener('DOMContentLoaded', setupRangeOutputs);
+
+        // ---------- Plotly theming ----------
+        // ---------- Theme (dark by default; light is remembered per browser) ----------
+        try {
+            if (localStorage.getItem('theme') === 'light') document.documentElement.dataset.theme = 'light';
+        } catch (e) { /* storage unavailable: stay dark */ }
+
+        function toggleTheme() {
+            const light = document.documentElement.dataset.theme !== 'light';
+            if (light) document.documentElement.dataset.theme = 'light';
+            else delete document.documentElement.dataset.theme;
+            try { localStorage.setItem('theme', light ? 'light' : 'dark'); } catch (e) {}
+            restyleAllPlots();
+        }
 
         const narrowScreen = window.matchMedia('(max-width: 768px)');
+        const PLOT_IDS = ['plot_pressure_profile', 'plot_flow_profile', 'plot_pressure_history', 'plot_flow_history'];
 
-        // Compact plot layout for phones: smaller fonts/margins, legend below,
-        // and no drag-zoom so touch gestures scroll the page instead.
-        function adaptLayoutForPhone(layout) {
-            layout.height = 280;
-            layout.margin = { l: 50, r: 10, t: 40, b: 70 };
-            layout.font = { size: 11 };
-            layout.legend = { orientation: 'h', x: 0, y: -0.3 };
-            layout.dragmode = false;
-            if (typeof layout.title === 'string') {
-                layout.title = { text: layout.title };
-            }
-            if (layout.title) {
-                layout.title.font = { size: 13 };
-            }
+        function cssVar(name) {
+            return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        }
+
+        function titleText(title) {
+            if (!title) return '';
+            return typeof title === 'string' ? title : (title.text || '');
+        }
+
+        // Applies the page's design tokens to a Plotly figure. Titles live in the
+        // card headers, so the in-chart title is dropped.
+        function styleFigure(data, layout) {
+            const narrow = narrowScreen.matches;
+            const series = [cssVar('--series-1'), cssVar('--series-2')];
+            const muted = cssVar('--text-muted');
+            const grid = cssVar('--grid');
+            const surface = cssVar('--surface-card');
+            const multi = data.length > 1;
+
+            data.forEach((trace, i) => {
+                trace.line = Object.assign({}, trace.line, { color: series[i % series.length], width: 2 });
+                trace.hovertemplate = '%{y:.2f}';
+            });
+
+            const axis = (ax) => Object.assign({}, ax, {
+                title: { text: titleText(ax && ax.title), font: { size: narrow ? 11 : 12, color: muted }, standoff: 8 },
+                gridcolor: grid, zerolinecolor: grid, linecolor: cssVar('--border-strong'),
+                ticks: 'outside', tickcolor: grid, ticklen: 4,
+                automargin: true,
+            });
+
+            layout.title = { text: '' };
+            layout.xaxis = axis(layout.xaxis);
+            layout.yaxis = axis(layout.yaxis);
+            layout.paper_bgcolor = surface;
+            layout.plot_bgcolor = surface;
+            layout.font = { family: cssVar('--font'), size: narrow ? 11 : 12, color: muted };
+            layout.height = narrow ? 260 : 300;
+            layout.margin = { l: 8, r: 12, t: multi ? 32 : 12, b: 8 };
+            layout.showlegend = multi;
+            layout.legend = { orientation: 'h', x: 0, xanchor: 'left', y: 1.02, yanchor: 'bottom', font: { color: cssVar('--text') } };
+            layout.hovermode = 'x unified';
+            layout.hoverlabel = { bgcolor: surface, bordercolor: grid, font: { color: cssVar('--text') } };
+            // On touch screens, let swipes scroll the page instead of zooming the chart.
+            layout.dragmode = narrow ? false : 'zoom';
             return layout;
         }
 
@@ -80,151 +365,215 @@
                     console.error(`Plot div #${divId} not found!`);
                     return;
                 }
-                if (narrowScreen.matches) {
-                    layout = adaptLayoutForPhone(layout);
-                }
-                Plotly.react(graphDiv, data, layout, { responsive: true, displaylogo: false });
+                Plotly.react(graphDiv, data, styleFigure(data, layout),
+                    { responsive: true, displaylogo: false, modeBarButtonsToRemove: ['lasso2d', 'select2d'] });
             } catch (e) {
                 console.error(`Error in JS renderPlot for ${divId}:`, e);
-                console.error("Data causing error:", data);
-                console.error("Layout causing error:", layout);
             }
         }
 
-        function setupRangeOutputs() {
-            document.querySelectorAll('input[type="range"]').forEach(slider => {
-                const output = slider.nextElementSibling;
-                let displayOutput = null;
-                if (output && output.tagName === 'OUTPUT') { displayOutput = output; }
-                else if (output && output.nodeType === Node.TEXT_NODE && output.nextElementSibling?.tagName === 'OUTPUT'){
-                    displayOutput = output.nextElementSibling;
-                }
-                if(displayOutput) {
-                    displayOutput.textContent = slider.value;
-                    slider.addEventListener('input', () => {
-                        displayOutput.textContent = slider.value;
-                    });
-                }
+        // Re-style existing plots when the screen size class or colour scheme changes.
+        function restyleAllPlots() {
+            PLOT_IDS.forEach(id => {
+                const gd = document.getElementById(id);
+                if (gd && gd.data) renderPlot(id, gd.data, gd.layout);
             });
-            console.log("HTML: Range slider outputs configured.");
         }
-
-        setTimeout(setupRangeOutputs, 500);
+        narrowScreen.addEventListener('change', restyleAllPlots);
     </script>
 </head>
 
 <body>
-    <header>
-        <h1 style="text-align: center;"> Coiled Tubing Simulator </h1>
-        <p style="text-align: center;">Single phase 1D pipe flow using a MOC (Method of Characteristics) scheme</p>
+    <header class="appbar">
+        <div class="brand">
+            <div class="brand-mark" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <path d="M3 12h4a5 5 0 0 1 10 0h4"/>
+                    <path d="M7 12a5 5 0 0 0 10 0"/>
+                    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                </svg>
+            </div>
+            <div>
+                <h1>Coiled Tubing Flow Simulator</h1>
+                <p>Transient 1D single-phase pipe flow &middot; Method of Characteristics &middot; Power-law fluid</p>
+            </div>
+        </div>
+        <div class="appbar-actions">
+            <div id="status_area" class="status" data-status="init" role="status">Loading Python&hellip;</div>
+            <button type="button" class="icon-btn" onclick="toggleTheme()" aria-label="Switch light/dark theme" title="Switch light/dark theme">
+                <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+                <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            </button>
+        </div>
     </header>
 
     <div class="layout">
-        <aside>
-            <h2>⚙️ Settings </h2>
-            
-            <details>
-                <summary>Pipe Geometry</summary>
-                <label for="L_input">Pipe Length (L, m)</label>
-                <input type="number" id="L_input" name="L" value="2300.0" step="10.0" min="1.0">
-                <label for="D_input">Pipe Diameter (D, m)</label>
-                <input type="number" id="D_input" name="D" value="0.05" step="0.005" min="0.001">
-                <label for="Dc_input">Coil Diameter (Dc, m)</label>
-                <input type="number" id="Dc_input" name="Dc" value="5.0" step="0.1" min="0.1">
-                <label for="rough_input">Pipe Roughness (ε, m)</label>
-                <input type="number" id="rough_input" name="roughness" value="0.000045" step="0.00001" min="0.0">
-                <label for="angle_input">Pipe Angle (° from horizontal)</label>
-                <input type="range" id="angle_input" name="angle" value="0.0" min="-90.0" max="90.0" step="1.0">
-                <output for="angle_input">0.0</output> °
-            </details>
+        <aside class="sidebar">
+            <div class="sidebar-sticky">
+                <section id="live_controls" class="card">
+                    <div class="card-header"><span class="card-title">Pump control</span></div>
+                    <div class="card-body">
+                        <div class="flow-readout">
+                            <label for="live_flow_slider">Pump flow rate</label>
+                            <span class="flow-value"><output for="live_flow_slider">0.0</output><small>L/min</small></span>
+                        </div>
+                        <input type="range" id="live_flow_slider" name="live_flow" value="0.0" min="0.0" max="1000.0" step="10.0">
+                        <div class="buttons">
+                            <button id="start_btn" class="primary" py-click="start_sim">
+                                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>Start
+                            </button>
+                            <button id="pause_btn" py-click="pause_sim">
+                                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>Pause
+                            </button>
+                            <button id="reset_btn" py-click="reset_sim">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></svg>Reset
+                            </button>
+                        </div>
+                    </div>
+                </section>
 
-            <details>
-                <summary>Fluid Properties</summary>
-                <label for="rho_widget">Fluid Density (ρ, kg/m³)</label>
-                <input type="number" id="rho_widget" name="rho" value="1000.0" step="10.0" min="100.0" py-change="update_rho_live">
-                <label for="Kpl_input">Consistency Index (K, Pa.sⁿ)</label>
-                <input type="number" id="Kpl_input" name="K_pl" value="0.065" step="0.005" min="0.001">
-                <label for="npl_input">Flow Behaviour Index (n)</label>
-                <input type="number" id="npl_input" name="n_pl" value="0.9" step="0.05" min="0.1" max="2.0">
-                <label for="Kbulk_input">Fluid Bulk Modulus (K_bulk, Pa)</label>
-                <input type="number" id="Kbulk_input" name="K_bulk" value="1.0e9" step="0.1e9" min="1e6">
-            </details>
+                <section class="card">
+                    <div class="card-header"><span class="card-title">Parameters</span></div>
+                    <p class="params-hint">Changes take effect when you press Reset.</p>
 
-             <details>
-                <summary>Pipe Properties</summary>
-                <label for="Epipe_input">Pipe Young's Modulus (E, Pa)</label>
-                <input type="number" id="Epipe_input" name="E_pipe" value="200e9" step="10e9" min="1e9">
-                <label for="epipe_input">Pipe Wall Thickness (e, m)</label>
-                <input type="number" id="epipe_input" name="e_pipe" value="0.005" step="0.001" min="0.001">
-                <label for="c1_input">Pipe Constraint Factor (c1)</label>
-                <input type="number" id="c1_input" name="c1" value="1.0" step="0.1" min="0.1" max="1.5">
-            </details>
+                    <details class="group">
+                        <summary>Pipe geometry</summary>
+                        <div class="group-body">
+                            <div class="field">
+                                <label for="L_input">Length</label>
+                                <div class="input-unit"><input type="number" id="L_input" name="L" value="2300.0" step="10.0" min="1.0"><span>m</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="D_input">Inner diameter</label>
+                                <div class="input-unit"><input type="number" id="D_input" name="D" value="0.05" step="0.005" min="0.001"><span>m</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="Dc_input">Coil diameter</label>
+                                <div class="input-unit"><input type="number" id="Dc_input" name="Dc" value="5.0" step="0.1" min="0.1"><span>m</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="rough_input">Roughness ε</label>
+                                <div class="input-unit"><input type="number" id="rough_input" name="roughness" value="0.000045" step="0.00001" min="0.0"><span>m</span></div>
+                            </div>
+                            <div class="field range-field">
+                                <label for="angle_input">Inclination from horizontal</label>
+                                <span><output for="angle_input">0.0</output>°</span>
+                                <input type="range" id="angle_input" name="angle" value="0.0" min="-90.0" max="90.0" step="1.0">
+                            </div>
+                        </div>
+                    </details>
 
-            <details>
-                <summary>Simulation Control</summary>
-                <label for="N_input">Spatial Segments (N)</label>
-                <input type="range" id="N_input" name="N" value="50" min="10" max="500" step="5">
-                 <output for="N_input">50</output>
-                <label for="Cr_input">Target Courant Number (Cr)</label>
-                <input type="range" id="Cr_input" name="Cr" value="0.95" min="0.1" max="1.0" step="0.05">
-                 <output for="Cr_input">0.95</output>
-                <label for="tfinal_input">Max Simulation Time (s)</label>
-                <input type="number" id="tfinal_input" name="t_final" value="1000.0" step="10.0" min="1.0">
-            </details>
+                    <details class="group">
+                        <summary>Fluid properties</summary>
+                        <div class="group-body">
+                            <div class="field">
+                                <label for="rho_widget">Density ρ</label>
+                                <div class="input-unit"><input type="number" id="rho_widget" name="rho" value="1000.0" step="10.0" min="100.0" py-change="update_rho_live"><span>kg/m³</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="Kpl_input">Consistency index K</label>
+                                <div class="input-unit"><input type="number" id="Kpl_input" name="K_pl" value="0.065" step="0.005" min="0.001"><span>Pa·sⁿ</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="npl_input">Flow behaviour index n</label>
+                                <div class="input-unit"><input type="number" id="npl_input" name="n_pl" value="0.9" step="0.05" min="0.1" max="2.0"><span>&ndash;</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="Kbulk_input">Bulk modulus</label>
+                                <div class="input-unit"><input type="number" id="Kbulk_input" name="K_bulk" value="1.0e9" step="0.1e9" min="1e6"><span>Pa</span></div>
+                            </div>
+                        </div>
+                    </details>
 
-             <details>
-                <summary>Initial/Outlet Conditions</summary>
-                 <label for="Pout_input">Outlet Pressure (P_out, Pa)</label>
-                 <input type="number" id="Pout_input" name="P_out" value="1.0e5" step="0.1e5">
-                 <label for="init_flow_input">Initial Flow Rate (L/min, for t=0)</label>
-                 <input type="number" id="init_flow_input" name="initial_flow" value="0.0" min="0.0">
-            </details>
+                    <details class="group">
+                        <summary>Pipe wall</summary>
+                        <div class="group-body">
+                            <div class="field">
+                                <label for="Epipe_input">Young's modulus E</label>
+                                <div class="input-unit"><input type="number" id="Epipe_input" name="E_pipe" value="200e9" step="10e9" min="1e9"><span>Pa</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="epipe_input">Wall thickness</label>
+                                <div class="input-unit"><input type="number" id="epipe_input" name="e_pipe" value="0.005" step="0.001" min="0.001"><span>m</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="c1_input">Constraint factor c₁</label>
+                                <div class="input-unit"><input type="number" id="c1_input" name="c1" value="1.0" step="0.1" min="0.1" max="1.5"><span>&ndash;</span></div>
+                            </div>
+                        </div>
+                    </details>
 
-            <hr>
-            <section id="live_controls">
-                <h2>⌚Flow Rate</h2>
-                <label for="live_flow_slider">Pump Flow Rate (L/min)</label>
-                <input type="range" id="live_flow_slider" name="live_flow" value="0.0" min="0.0" max="1000.0" step="10.0">
-                <output for="live_flow_slider">0.0</output> L/min
+                    <details class="group">
+                        <summary>Boundary &amp; initial conditions</summary>
+                        <div class="group-body">
+                            <div class="field">
+                                <label for="Pout_input">Outlet pressure</label>
+                                <div class="input-unit"><input type="number" id="Pout_input" name="P_out" value="1.0e5" step="0.1e5"><span>Pa</span></div>
+                            </div>
+                            <div class="field">
+                                <label for="init_flow_input">Initial flow rate</label>
+                                <div class="input-unit"><input type="number" id="init_flow_input" name="initial_flow" value="0.0" min="0.0"><span>L/min</span></div>
+                            </div>
+                        </div>
+                    </details>
 
-                <div class="buttons">
-                    <button id="start_btn" py-click="start_sim">▶️ Start</button>
-                    <button id="pause_btn" py-click="pause_sim">⏸️ Pause</button>
-                    <button id="reset_btn" py-click="reset_sim">🔄 Reset</button>
-                </div>
-            </section>
-
-
-             <hr>
-            <h2>ℹ️ Status</h2>
-            <div id="status_area">Initializing...</div>
-
+                    <details class="group">
+                        <summary>Numerics</summary>
+                        <div class="group-body">
+                            <div class="field range-field">
+                                <label for="N_input">Spatial segments N</label>
+                                <output for="N_input">50</output>
+                                <input type="range" id="N_input" name="N" value="50" min="10" max="500" step="5">
+                            </div>
+                            <div class="field range-field">
+                                <label for="Cr_input">Target Courant number</label>
+                                <output for="Cr_input">0.95</output>
+                                <input type="range" id="Cr_input" name="Cr" value="0.95" min="0.1" max="1.0" step="0.05">
+                            </div>
+                            <div class="field">
+                                <label for="tfinal_input">Max simulation time</label>
+                                <div class="input-unit"><input type="number" id="tfinal_input" name="t_final" value="1000.0" step="10.0" min="1.0"><span>s</span></div>
+                            </div>
+                        </div>
+                    </details>
+                </section>
+            </div>
         </aside>
 
         <main>
-            <h2 style="text-align: center;">📈 Simulation Results</h2>
-            <article>
-                <h3 id="profile_time_label">Profiles</h3>
-                <div id="plot_pressure_profile"></div>
-                <div id="plot_flow_profile"></div>
-            </article>
+            <div id="metrics_area" class="kpis">
+                <div class="card kpi"><span class="kpi-label">Simulated time</span><span class="kpi-value">&ndash;</span></div>
+                <div class="card kpi"><span class="kpi-label">Inlet pressure</span><span class="kpi-value">&ndash;</span></div>
+                <div class="card kpi"><span class="kpi-label">Pressure drop</span><span class="kpi-value">&ndash;</span></div>
+                <div class="card kpi"><span class="kpi-label">Inlet flow</span><span class="kpi-value">&ndash;</span></div>
+                <div class="card kpi"><span class="kpi-label">Outlet flow</span><span class="kpi-value">&ndash;</span></div>
+            </div>
 
-            <article>
-                <h3>Time Based Plots </h3>
-                <div id="plot_pressure_history"></div>
-                <div id="plot_flow_history"></div>
-            </article>
+            <div class="plots">
+                <section class="card">
+                    <div class="card-header"><span class="card-title">Pressure along pipe</span><span class="card-sub">bar</span></div>
+                    <div id="plot_pressure_profile" class="plot"></div>
+                </section>
+                <section class="card">
+                    <div class="card-header"><span class="card-title">Flow rate along pipe</span><span class="card-sub">L/min</span></div>
+                    <div id="plot_flow_profile" class="plot"></div>
+                </section>
+                <section class="card">
+                    <div class="card-header"><span class="card-title">Pressure history</span><span class="card-sub">inlet &amp; outlet</span></div>
+                    <div id="plot_pressure_history" class="plot"></div>
+                </section>
+                <section class="card">
+                    <div class="card-header"><span class="card-title">Flow rate history</span><span class="card-sub">inlet &amp; outlet</span></div>
+                    <div id="plot_flow_history" class="plot"></div>
+                </section>
+            </div>
 
-            <article>
-                <h3>Key Metrics</h3>
-                <div id="metrics_area">
-                    <p> Initializing... </p>
-                </div>
-            </article>
+            <details class="card log">
+                <summary>Simulation log</summary>
+                <pre id="log_area">Initializing PyScript/Pyodide...</pre>
+            </details>
 
-            <h2>📜 Simulation Log</h2>
-            <pre id="log_area">Initializing PyScript/Pyodide...</pre>
-
+            <p class="footnote">Runs entirely in your browser using Python (Pyodide). First load can take up to a minute.</p>
         </main>
     </div>
 
@@ -235,9 +584,9 @@
     <py-script output="none">
     from js import JSON
     import numpy as np
-    
+
     # Utility for safely converting Python objects to pure JS
-    
+
     def sanitize_for_json(val):
         import numpy as np
         if isinstance(val, (list, tuple)): return [sanitize_for_json(item) for item in val]
@@ -248,12 +597,12 @@
         elif isinstance(val, (np.bool_)): return bool(val)
         elif isinstance(val, (np.ndarray)): return [sanitize_for_json(item) for item in val.tolist()]
         else: return val
-    
+
     # JSON round-trip conversion with NumPy-safe data
-    
+
     def safe_js(obj):
         return JSON.parse(JSON.stringify(sanitize_for_json(obj)))
-     
+
     def update_rho_live(*args, **kwargs):
         try:
             new_rho = float(document.getElementById("rho_widget").value)
@@ -262,7 +611,7 @@
         except Exception as e:
             print("Error updating rho live:", e)
     </py-script>
-    
+
     <py-script src="./main.py"></py-script>
 
 </body>

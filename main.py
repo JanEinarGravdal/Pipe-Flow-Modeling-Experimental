@@ -261,12 +261,16 @@ def add_log_message(msg_type, text):
 def update_status_display():
     status_area = dom_elements.get("status_area"); status = sim_state['status']; current_t = sim_state['current_t']
     if status_area:
-        if status == "running": status_text = f"🟢 Running... t = {current_t:.2f} s"
-        elif status == "paused": status_text = f"🟡 Paused at t = {current_t:.2f} s"
-        elif status == "stopped": status_text = f"🔴 Stopped at t = {current_t:.2f} s"
-        elif status == "error": status_text = f"❌ Error at t = {current_t:.2f} s"
-        else: status_text = "⚪ Unknown"
+        if status == "running": status_text = f"Running · t = {current_t:.2f} s"
+        elif status == "paused": status_text = f"Paused · t = {current_t:.2f} s"
+        elif status == "stopped": status_text = f"Stopped · t = {current_t:.2f} s"
+        elif status == "error": status_text = f"Error · t = {current_t:.2f} s"
+        else: status_text = "Unknown"
         status_area.innerText = status_text
+        status_area.setAttribute("data-status", status)
+
+def metric_tile(label, value, unit):
+    return f'<div class="card kpi"><span class="kpi-label">{label}</span><span class="kpi-value">{value}<small>{unit}</small></span></div>'
 
 def update_metrics_display():
     metrics_area = dom_elements.get("metrics_area")
@@ -274,9 +278,13 @@ def update_metrics_display():
         P = sim_state["P"]; V = sim_state["V"]; N = sim_state["run_params"].get('N', 0); A = sim_state["run_params"].get('A', 0)
         if N > 0 and A > 0:
              Q_in_lpm = V[0] * A * 60000.0; Q_out_lpm = V[N] * A * 60000.0; P_in_bar = P[0] / 1e5; dP_bar = (P[0] - P[N]) / 1e5
-             metrics_area.innerHTML = f"<p> Inlet P: {P_in_bar:.2f} bar | Outlet Q: {Q_out_lpm:.1f} L/min | dP: {dP_bar:.2f} bar | Inlet Q: {Q_in_lpm:.1f} L/min </p>"
-        else: metrics_area.innerText = "Metrics unavailable (N or A invalid)"
-    elif metrics_area: metrics_area.innerText = "Metrics unavailable (simulation not run)"
+             metrics_area.innerHTML = "".join([
+                 metric_tile("Simulated time", f"{sim_state['current_t']:.1f}", "s"),
+                 metric_tile("Inlet pressure", f"{P_in_bar:.2f}", "bar"),
+                 metric_tile("Pressure drop", f"{dP_bar:.2f}", "bar"),
+                 metric_tile("Inlet flow", f"{Q_in_lpm:.1f}", "L/min"),
+                 metric_tile("Outlet flow", f"{Q_out_lpm:.1f}", "L/min"),
+             ])
 
 
 def sanitize_for_json(val):
@@ -324,7 +332,7 @@ def update_plots():
                         'xaxis': {'title': 'Pipe Length (m)'},
                         'yaxis': {
                             'title': 'Pressure (bar)',
-                            'range': [0, sim_state["max_pressure_bar"]],
+                            'range': [0, 1.05 * sim_state["max_pressure_bar"]],
                             'autorange': False
                         },
                         'uirevision': 'profile_p'
@@ -334,7 +342,7 @@ def update_plots():
                         'xaxis': {'title': 'Pipe Length (m)'},
                         'yaxis': {
                             'title': 'Flow Rate (L/min)',
-                            'range': [0, sim_state["max_flow_lpm"]],
+                            'range': [0, 1.05 * sim_state["max_flow_lpm"]],
                             'autorange': False
                         },
                         'uirevision': 'profile_q'
